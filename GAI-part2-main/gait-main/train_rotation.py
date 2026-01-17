@@ -16,11 +16,11 @@ def main():
     env = ArenaEnv(control_mode="rotation", max_steps=2000)
     
     # create model save directory
-    model_dir = "models/rotation"
+    model_dir = "./models/rotation"
     os.makedirs(model_dir, exist_ok=True)
     
     # create logs directory
-    log_dir = "logs/rotation"
+    log_dir = "./logs/rotation"
     os.makedirs(log_dir, exist_ok=True)
     
     # create evaluation environment

@@ -12,7 +12,7 @@ from arena_env import ArenaEnv
 
 def main():
     # load the best model
-    model_path = "models/directional/best_model"
+    model_path = "./models/directional/best_model"
     
     if not os.path.exists(model_path + ".zip"):
         print(f"Error: Model not found at {model_path}.zip")
