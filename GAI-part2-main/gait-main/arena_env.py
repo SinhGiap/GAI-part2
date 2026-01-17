@@ -426,11 +426,25 @@ class ArenaEnv(gym.Env):
 				# In directional mode, facing is tied to movement direction, so aim reward creates
 				# conflicting gradients between "navigate to spawner" and "face enemies"
 				if self.control_mode == "rotation":
-					aim_reward = self._aim_alignment_reward()
-					reward += aim_reward
-					# Penalize shooting when misaligned (reduces spam behavior)
-					if aim_reward < 0.05:
-						reward -= 0.1
+					# If we're very close to an active spawner, skip aim-based penalty/reward
+					active_spawners = [s for s in self.spawners if s.is_active()]
+					dist_to_spawner = None
+					if active_spawners:
+						ns = min(active_spawners, key=lambda s: (s.x - p.x) ** 2 + (s.y - p.y) ** 2)
+						dist_to_spawner = math.hypot(ns.x - p.x, ns.y - p.y) / max(1.0, self._max_dist)
+					# when close to spawner, don't apply aim alignment reward/penalty (encourage spawner-focused shooting)
+					if active_spawners and dist_to_spawner is not None and dist_to_spawner < 0.2:
+						# no aim penalty near spawner
+						pass
+					else:
+						aim_reward = self._aim_alignment_reward()
+						reward += aim_reward
+						# Penalize shooting when misaligned (reduces spam behavior)
+						if aim_reward < 0.05:
+							reward -= 0.1
+				# Emergency shooting bonus: small positive incentive when spawners exist and enemies are present
+				if self.spawners and any(s.is_active() for s in self.spawners) and self.enemies:
+					reward += 0.05
 
 		# update player
 		# update player (applies drag and clamps)
@@ -521,6 +535,14 @@ class ArenaEnv(gym.Env):
 							self.enemies.clear()
 						else:
 							reward += self.REWARD_SPAWNER_HIT  # Reward damaging spawner
+							# Extra small bonus when player is close to the spawner (encourage finishing/pressing the objective)
+							try:
+								dist_to_spawner = math.hypot(sp.x - p.x, sp.y - p.y) / max(1.0, self._max_dist)
+								if dist_to_spawner < 0.2:
+									reward += 0.5
+							except Exception:
+								# safety: if anything goes wrong, keep the base spawner hit reward
+								pass
 							# small hit vfx
 							self._spawn_particles(sp.x, sp.y, (200, 100, 255, 200), count=8, size=2, life=0.5)
 						break
@@ -573,10 +595,38 @@ class ArenaEnv(gym.Env):
 		# Compute new nearest-target distance and reward proportionally to the reduction
 		new_target_dist = _nearest_norm_dist()
 		shaping_reward = self.REWARD_SHAPING_COEF * (prev_target_dist - new_target_dist)
-		# Allow negative shaping (punish moving away from spawner) to enforce focus
+		# Prevent oscillation near the target: clamp shaping to non-negative when already very close
+		if new_target_dist < 0.1:
+			shaping_reward = max(0.0, shaping_reward)
+		# Allow negative shaping (punish moving away from spawner) to enforce focus when not extremely close
 		reward += float(shaping_reward)
 		# store for next step
 		self._last_target_dist = new_target_dist
+
+		# Small stall penalty to discourage waiting/loitering (breaks infinite waiting)
+		reward -= 0.002
+
+		# Enemy proximity danger penalty: standing still near enemies should be bad
+		if self.enemies:
+			nearest_enemy_dist = min(math.hypot(e.x - p.x, e.y - p.y) for e in self.enemies) / max(1.0, self._max_dist)
+			if nearest_enemy_dist < 0.15:
+				reward -= 0.2
+
+		# --- Directional arrival control (anti-overshoot) ---
+		if self.control_mode == "directional":
+			active_spawners = [s for s in self.spawners if s.is_active()]
+			if active_spawners:
+				ns = min(active_spawners, key=lambda s: (s.x - p.x) ** 2 + (s.y - p.y) ** 2)
+				dist = math.hypot(ns.x - p.x, ns.y - p.y) / max(1.0, self._max_dist)
+
+				# Only care when close to target
+				if dist < 0.15:
+					speed = math.hypot(p.vx, p.vy) / self.max_player_speed
+					# Reward slowing down near target (arrival shaping)
+					reward += 0.4 * (1.0 - speed)
+					# Penalize high velocity near the target to encourage stopping
+					if speed > 0.6:
+						reward -= 0.2
 
 		# death
 		if p.health <= 0:
