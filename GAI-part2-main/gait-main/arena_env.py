@@ -82,6 +82,8 @@ class ArenaEnv(gym.Env):
 	REWARD_SHAPING_COEF = 8.0  # MUCH stronger pull toward spawners (was 3.0)
 	REWARD_CORNER_PENALTY = -0.5  # NEW: Punish staying in corners
 	REWARD_WALL_PENALTY = -0.3  # Penalty for ramming into walls
+	# Max reward when perfectly aligned to an enemy while shooting (was 0.3)
+	REWARD_AIM_ALIGNMENT_MAX = 0.6
 
 	def __init__(self, width=800, height=600, control_mode="directional", max_steps=2000):
 		super().__init__()
@@ -273,8 +275,9 @@ class ArenaEnv(gym.Env):
 			# spawn interval starts VERY SLOW to give agent time to learn
 			sp.spawn_interval = INITIAL_SPAWN_INTERVAL
 			sp.cooldown = sp.spawn_interval * SPAWNER_COOLDOWN_FACTOR
-			# spawner health: ONLY 1 HIT to destroy! Makes task very achievable
-			sp.health = INITIAL_SPAWNER_HEALTH
+			# spawner health: start at 2.0 and increase by 1.0 every 2 phases
+			# phase 1 -> 2.0, phases 2-3 -> 3.0, phases 4-5 -> 4.0, etc.
+			sp.health = 2.0 + math.ceil((self.phase - 1) / 2.0) * 1.0
 			sp.max_health = sp.health
 			self.spawners.append(sp)
 
@@ -560,8 +563,9 @@ class ArenaEnv(gym.Env):
 				# gradually decrease spawn intervals using tunables
 				sp.spawn_interval = max(SPAWNER_MIN_SPAWN_INTERVAL, SPAWNER_BASE_SPAWN_INTERVAL - SPAWNER_SPAWN_DECAY * (self.phase - 1))
 				sp.cooldown = sp.spawn_interval * SPAWNER_COOLDOWN_FACTOR
-				# gradually increase spawner health using tunables
-				sp.health = SPAWNER_BASE_HEALTH + SPAWNER_HEALTH_PER_PHASE * (self.phase - 1)
+				# spawner health: start at 2.0 and increase by 1.0 every 2 phases
+				# phase 1 -> 2.0, phases 2-3 -> 3.0, phases 4-5 -> 4.0, etc.
+				sp.health = 2.0 + math.ceil((self.phase - 1) / 2.0) * 1.0
 				sp.max_health = sp.health
 				self.spawners.append(sp)
 
@@ -682,8 +686,8 @@ class ArenaEnv(gym.Env):
 		cos_sim = fx * tx + fy * ty
 		
 		# Reward only if roughly aiming at enemy (positive alignment)
-		# Scale: 0.3 max reward when perfectly aligned
-		return max(0.0, cos_sim) * 0.3
+		# Scale: use tunable max reward (higher values increase incentive to aim)
+		return max(0.0, cos_sim) * float(self.REWARD_AIM_ALIGNMENT_MAX)
 	def _player_shoot(self):
 		assert self.player is not None
 		speed = 350.0  # bullet speed (increased from 250.0 for better hit probability)
